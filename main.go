@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"time"
 )
 
-const InputFile = "media/8582174042837694306.mp4"
-const OutputFile = "media/8582174042837694306_new.mp4"
+const InputFile = "media/Енисей_барберинг.mp4"
+const OutputFile = "media/Енисей_барберинг_new.mp4"
+const OutputFileWebm = "media/Енисей_барберинг_new.webm"
 
 var Codec = ""
 var Bitrate = "100000"
@@ -26,14 +29,20 @@ type FFprobeMetadata struct {
 }
 
 func main() {
-	metadataOld, err := getVideoMetadata(InputFile)
-	if err != nil {
-		log.Fatal(err)
-	}
+	// metadataOld, err := getVideoMetadata(InputFile)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
 	if err := compressVideo(InputFile); err != nil {
 		log.Fatal(err)
 	}
+	log.Println("video compressed successfully")
+
+	// if err := convertToWebm(OutputFile); err != nil {
+	// 	log.Fatal(err)
+	// }
+	// log.Println("video converted sucessfully")
 
 	// if err := modifyVideoParam(InputFile); err != nil {
 	// 	log.Fatal(err)
@@ -44,7 +53,6 @@ func main() {
 	// 	log.Fatal(err)
 	// }
 
-	fmt.Println(metadataOld.Format.Bitrate)
 	// fmt.Println(metadataNew.Format.Bitrate)
 }
 
@@ -72,21 +80,30 @@ func getVideoMetadata(filepath string) (*FFprobeMetadata, error) {
 }
 
 func compressVideo(filepath string) error {
+	now := time.Now()
 	cmd := exec.Command(
 		"ffmpeg",
-		"-i", filepath,
-		"-preset", "fast",
-		"-crf", "28",
 		"-y",
+		"-i", filepath,
+		"-c:v", "h264_videotoolbox",
+		"-preset", "ultrafast",
+		"-crf", "28",
+		"-b:v", "3000k",
+		"-c:a", "aac",
+		"-b:a", "128k",
 		OutputFile,
 	)
 
-	output, err := cmd.Output()
-	if err != nil {
-		return err
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ошибка конвертации в MP4: %w", err)
 	}
 
-	fmt.Println(string(output))
+	duration := time.Since(now)
+
+	log.Println("Time for compress video:", duration)
+
 	return nil
 }
 
@@ -107,5 +124,22 @@ func modifyVideoParam(filepath string) error {
 	}
 
 	fmt.Println(string(output))
+	return nil
+}
+
+func convertToWebm(filepath string) error {
+	cmd := exec.Command("ffmpeg",
+		"-i", filepath,
+		"-c:v", "libvpx-vp9",
+		"-b:v", "1M",
+		"-c:a", "libopus",
+		"-b:a", "128k",
+		"-y",
+		OutputFileWebm,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ошибка конвертации в WebM: %w. ffmpeg output:\n%s", err, output)
+	}
 	return nil
 }
