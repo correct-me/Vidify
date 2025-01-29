@@ -31,17 +31,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := modifyVideoParam(InputFile); err != nil {
+	if err := compressVideo(InputFile); err != nil {
 		log.Fatal(err)
 	}
 
-	metadataNew, err := getVideoMetadata(OutputFile)
-	if err != nil {
-		log.Fatal(err)
-	}
+	// if err := modifyVideoParam(InputFile); err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	// metadataNew, err := getVideoMetadata(OutputFile)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
 	fmt.Println(metadataOld.Format.Bitrate)
-	fmt.Println(metadataNew.Format.Bitrate)
+	// fmt.Println(metadataNew.Format.Bitrate)
 }
 
 func getVideoMetadata(filepath string) (*FFprobeMetadata, error) {
@@ -65,6 +69,25 @@ func getVideoMetadata(filepath string) (*FFprobeMetadata, error) {
 	}
 
 	return &metadata, nil
+}
+
+func compressVideo(filepath string) error {
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i", filepath,
+		"-preset", "fast",
+		"-crf", "28",
+		"-y",
+		OutputFile,
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(output))
+	return nil
 }
 
 func modifyVideoParam(filepath string) error {
