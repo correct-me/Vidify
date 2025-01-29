@@ -39,6 +39,11 @@ func main() {
 	}
 	log.Println("video compressed successfully")
 
+	if err := compressVideoWithPresets(InputFile); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("video compressed successfully")
+
 	// if err := convertToWebm(OutputFile); err != nil {
 	// 	log.Fatal(err)
 	// }
@@ -77,6 +82,29 @@ func getVideoMetadata(filepath string) (*FFprobeMetadata, error) {
 	}
 
 	return &metadata, nil
+}
+
+func compressVideoWithPresets(filepath string) error {
+	start := time.Now()
+	cmd := exec.Command(
+		"ffmpeg",
+		"-y",
+		"-i", filepath,
+		"-c:v", "libx264",
+		"-preset", "ultrafast",
+		"-crf", "28",
+		OutputFile,
+	)
+
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ошибка конвертации в MP4 с прессетом: %w", err)
+	}
+	duration := time.Since(start)
+
+	log.Println("Time for compress video with presets:", duration)
+	return nil
 }
 
 func compressVideo(filepath string) error {
