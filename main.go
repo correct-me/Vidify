@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"os/exec"
 )
 
 const InputFile = "media/Енисей_барберинг.mp4"
@@ -31,64 +34,108 @@ func main() {
 
 	log.Println("starting server in :8081")
 
-	http.HandleFunc("/upload", uploadFileAndSendToServer)
+	http.HandleFunc("/proxy", proxyHandler)
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }
 
-func uploadFileAndSendToServer(w http.ResponseWriter, r *http.Request) {
+func proxyHandler(w http.ResponseWriter, r *http.Request) {
+	// Проверка метода запроса
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// Извлекаем файл из формы (ключ "file")
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "Error retrieving file from form", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Ошибка получения файла: %v", err), http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
-	fileBytes, err := io.ReadAll(file)
+	// Сохраняем исходное видео во временный файл
+	inputFile := "temp_input.mp4"
+	outFile, err := os.Create(inputFile)
 	if err != nil {
-		http.Error(w, "Error reading file", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка создания временного файла: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(outFile, file); err != nil {
+		outFile.Close()
+		http.Error(w, fmt.Sprintf("Ошибка сохранения файла: %v", err), http.StatusInternalServerError)
+		return
+	}
+	outFile.Close()
+
+	// Сжимаем видео с помощью ffmpeg
+	outputFile := "temp_output.mp4"
+	cmd := exec.Command("ffmpeg", "-y", "-i", inputFile, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", outputFile)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		http.Error(w, fmt.Sprintf("Ошибка сжатия видео: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	// Формирование multipart-запроса для отправки сжатого файла
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
+	// Создаем часть формы с ключом "file"
 	part, err := writer.CreateFormFile("file", header.Filename)
 	if err != nil {
-		http.Error(w, "Error creating form file", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка создания части формы: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	if _, err = part.Write(fileBytes); err != nil {
-		http.Error(w, "Error writing file to form", http.StatusInternalServerError)
-		return
-	}
-
-	if err = writer.Close(); err != nil {
-		http.Error(w, "Error closing writer", http.StatusInternalServerError)
-		return
-	}
-
-	req, err := http.NewRequest("POST", "http://localhost:8080/upload", &buf)
+	// Открываем сжатый файл и копируем его содержимое в multipart часть
+	compFile, err := os.Open(outputFile)
 	if err != nil {
-		http.Error(w, "Error creating request", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка открытия сжатого файла: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(part, compFile); err != nil {
+		compFile.Close()
+		http.Error(w, fmt.Sprintf("Ошибка записи файла в форму: %v", err), http.StatusInternalServerError)
+		return
+	}
+	compFile.Close()
+
+	// Завершаем формирование multipart данных
+	if err := writer.Close(); err != nil {
+		http.Error(w, fmt.Sprintf("Ошибка закрытия writer: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Формируем новый POST-запрос для отправки на целевой сервис
+	targetURL := "http://localhost:8080/upload"
+	req, err := http.NewRequest("POST", targetURL, &buf)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Ошибка создания запроса: %v", err), http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
+	// Отправляем запрос на целевой сервис
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "Error sending request", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Ошибка отправки запроса: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
-	w.WriteHeader(http.StatusOK)
+	// Читаем ответ от сервиса и возвращаем его клиенту
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		http.Error(w, fmt.Sprintf("Ошибка отправки ответа клиенту: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Удаляем временные файлы
+	os.Remove(inputFile)
+	os.Remove(outputFile)
 }
 
 // func getVideoMetadata(filepath string) (*FFprobeMetadata, error) {
